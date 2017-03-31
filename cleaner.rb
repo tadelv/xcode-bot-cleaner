@@ -1,7 +1,5 @@
 #!/usr/bin/ruby
 
-require 'net/http'
-require 'openssl'
 require 'json'
 require 'optparse'
 
@@ -12,6 +10,7 @@ require 'optparse'
 # that ended with a specific result value, i.e. "build-failed".
 
 options = {}
+
 opt_parser = OptionParser.new do |opts|
   opts.banner = "Usage: cleaner.rb [options]\nInspects and optionally cleans Xcode server integrations."
 
@@ -21,16 +20,15 @@ opt_parser = OptionParser.new do |opts|
   opts.on('-k', '--klean', 'Clean all failed integrations') do |v|
     options[:klean] = v
   end
-  opts.on('-a', '--auth', 'Set authentication <user:pass> for xcode server. REQUIRED if you want to delete integrations') do |v|
+  opts.on('-a', '--auth=USER:PASS', String, 'Set authentication <user:pass> for xcode server. REQUIRED if you want to delete integrations') do |v|
     options[:auth] = v
   end
   opts.on('-s', '--server=SERVER_URL', String, 'Set server url, i.e https://localhost:20343/api') do |v|
-    puts "#{v}, #{v.class}"
     options[:server] = v
   end
-end
+end.parse!(ARGV)
 
-opt_parser.parse!(ARGV)
+puts "Running with #{options}" if options[:verbose]
 
 API_URL = (options[:server]).to_s.freeze
 BOTS_API_URL = "#{options[:server]}/bots".freeze
@@ -56,17 +54,20 @@ class Cleaner
 
   def clean_integrations(bot, result_filter = '')
     # fetch bot integrations
-    puts "#{BOTS_API_URL}/#{bot[:id]}/integrations"
+    puts "#{BOTS_API_URL}/#{bot[:id]}/integrations" if @opts[:verbose]
 
     integrations = JSON.parse(`curl -k #{BOTS_API_URL}/#{bot[:id]}/integrations`)['results']
+    
+    puts "Received #{integrations.size} integrations" if @opts[:verbose]
 
     failed = []
-    result_filter = ['trigger-error', 'canceled'] if result_filter.empty?
+    result_filter = ["trigger-error", "canceled"] if result_filter.empty?
 
     integrations.each do |integration|
       p integration['result'] unless @opts[:klean]
       failed << integration['_id'] if result_filter.include? integration['result']
     end
+    puts "Running cleanup on #{failed.size} integrations" if @opts[:verbose]
     return if !@opts[:klean] || !@opts[:auth]
     # purge all failed integrations
     delete_integrations(failed)
@@ -74,7 +75,7 @@ class Cleaner
   
   def delete_integrations(integrations)
     integrations.each do |integration|
-      `curl -v -X DELETE -u "#{@opts[:auth]}" -k #{API_URL}/integrations/#{integration}`
+      `curl -X DELETE -u "#{@opts[:auth]}" -k #{API_URL}/integrations/#{integration}`
     end
   end
 end
@@ -96,6 +97,6 @@ num -= 1
 bot = bot_data[num]
 
 puts 'Enter result filter (leave empty for default: trigger-error, canceled)'
-filter = gets
+filter = gets.gsub!("\n","")
 
 cleaner.clean_integrations(bot, filter)
